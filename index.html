@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>WMI Lifting Inspection</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script>
+
+// === WMI Lifting Inspection – Browser App ===
+
+const todayStr = () => new Date().toISOString().slice(0,10);
+const uid = () => Math.random().toString(36).slice(2, 9);
+const yearOf = (isoDate) => (isoDate ? new Date(isoDate).getFullYear() : new Date().getFullYear());
+const seqKey = (k, yr) => `${k}_${yr}`;
+const getNextSeq = (k, yr) => {
+  try {
+    const key = seqKey(k, yr);
+    const n = parseInt(localStorage.getItem(key) || "0", 10) + 1;
+    localStorage.setItem(key, String(n));
+    return n;
+  } catch {
+    return Math.floor(Math.random()*9000)+1000;
+  }
+};
+const pad4 = (n) => String(n).padStart(4, "0");
+
+const DEFAULT_LOCATIONS = [
+  "Main Roof", "HVAC 1", "HVAC 2", "Plant Floor",
+  "Warehouse A", "Warehouse B", "Loading Dock", "Exterior Yard",
+];
+
+const EQUIPMENT_TYPES = [
+  "Anchor Point","Fall Arrest Lanyard","Overhead Crane","Gantry Crane","Jib Crane",
+  "Forklift Attachment","Chain Hoist","Lever Hoist","Slings – Webbing","Slings – Chain","Lift Table","Other"
+];
+
+const COMPANY = {
+  name: "Woolley's Mill Inspection Ltd.",
+  address1: "45 Thomson Rd.",
+  address2: "Simcoe, ON  N3Y 4Z6",
+  phone: "905-906-4591",
+  email: "adam@wmiltd.ca",
+};
+
+function useLocalStorage(key, init) {
+  const [state, setState] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : init;
+    } catch {
+      return init;
+    }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(state)); } catch {}
+  }, [key, state]);
+  return [state, setState];
+}
+
+// Printable HTML for a single report
+function renderPrintableHTML(entry, logoDataUrl, wm){
+  const wmImg = wm && logoDataUrl ? `<img src="${logoDataUrl}" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:520px;opacity:0.12;filter:grayscale(100%);pointer-events:none;"/>` : "";
+  return `
+  <div style="position:relative;width:780px;border-radius:12px;font-family:ui-sans-serif,system-ui,-apple-system;">
+    ${wmImg}
+    <div style="display:flex;justify-content:space-between;gap:16px;">
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        ${logoDataUrl?`<img src="${logoDataUrl}" style="height:56px;object-fit:contain;"/>`:''}
+        <div style="text-align:left;">
+          <div style="font-size:20px;font-weight:700;">${COMPANY.name}</div>
+          <div style="font-size:12px;color:#6b7280;">Lifting Device Inspection Report</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:4px;">${COMPANY.address1}</div>
+          <div style="font-size:11px;color:#6b7280;">${COMPANY.address2}</div>
+          <div style="font-size:11px;color:#6b7280;">Phone: ${COMPANY.phone} • Email: ${COMPANY.email}</div>
+        </div>
+      </div>
+      <div style="text-align:right;font-size:12px;">
+        <div><b>Date:</b> ${entry.date}</div>
+        <div><b>Report #:</b> ${entry.reportNo || `${entry.serialNo}-${new Date().toISOString().slice(2,10).replaceAll('-','')}`}</div>
+        <div><b>Page:</b> 1 <span style="color:#6b7280">of</span> 1</div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;">
+      ${row("Customer", entry.customer)}
+      ${row("Contact Person", entry.contact)}
+      ${row("Address", entry.address, 2)}
+      ${row("Client Order No.", entry.clientOrderNo)}
+      ${row("Our Inspection No.", entry.ourInspectionNo)}
+    </div>
+
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;">
+      ${row("Lifting Device Make and Type", entry.makeAndType)}
+      ${row("Capacity", entry.capacity)}
+      ${row("Serial No.", entry.serialNo)}
+      ${row("Location", entry.location)}
+    </div>
+
+    <div style="margin-top:16px;font-size:13px;">
+      <div style="font-weight:600;margin-bottom:6px;">Scope of Work Performed on Above Lifting Device</div>
+      <ul style="list-style:none;padding:0;margin:0;display:grid;gap:4px;">
+        ${scopeLine("A) Visual inspection of structure and components", entry.scopeA_visual)}
+        ${scopeLine("B) Load test (per standard / manufacturer)", entry.scopeB_loadTest)}
+        ${scopeLine("C) MT examination of structural welds and critical areas", entry.scopeC_mt)}
+        ${scopeLine("D) UT on accessible pins and bolts", entry.scopeD_utPins)}
+        ${scopeLine("E) Corrective action and re-inspection", entry.scopeE_corrective)}
+        ${scopeLine(`F) Other (specify): ${entry.scopeOtherText || '—'}`, entry.scopeF_other)}
+      </ul>
+    </div>
+
+    <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div style="border:1px solid #e5e7eb;border-radius:10px;min-height:220px;display:flex;align-items:center;justify-content:center;background:#f9fafb;">
+        ${entry.photoDataUrl?`<img src="${entry.photoDataUrl}" style="max-height:280px;object-fit:contain;"/>`:'<div style="font-size:11px;color:#6b7280;">No photo supplied</div>'}
+      </div>
+      <div style="font-size:13px;">
+        <div style="font-weight:600;margin-bottom:6px;">CERTIFIED:</div>
+        <div style="display:flex;gap:24px;align-items:center;margin:6px 0;">
+          ${checkMark(entry.certified === 'Yes', 'Yes')}
+          ${checkMark(entry.certified === 'No', 'No')}
+        </div>
+        <div style="margin-top:12px;">
+          <div style="font-weight:600;margin-bottom:6px;">Comments</div>
+          <div style="min-height:120px;border:1px solid #e5e7eb;border-radius:10px;padding:8px;white-space:pre-wrap;">${entry.comments || '—'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:13px;">
+      <div style="border:1px solid #e5e7eb;border-radius:10px;padding:8px;">
+        <div style="font-weight:600;margin-bottom:6px;">Inspector</div>
+        <div>Name: ${entry.inspectorName || '_______________________'}</div>
+        <div>Signature: ____________________</div>
+        <div>Date: ${entry.date}</div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:10px;padding:8px;">
+        <div style="font-weight:600;margin-bottom:6px;">Client Acceptance</div>
+        <div>Name/Title: ___________________</div>
+        <div>Signature: ____________________</div>
+        <div>Date: ________________________</div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;font-size:11px;color:#6b7280;">
+      INSPECTION: Pursuant to the current regulations of the Occupational Health and Safety Act dealing with lifting devices, an inspection must be performed at least once per year by a competent person. It is recommended that maintenance be done in accordance with the manufacturer's manual.
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:#6b7280;">
+      This certificate or report is valid only for the work which it specifically describes and is not transferable without written approval by Woolley's Mill Inspection Inc.
+    </div>
+  </div>`;
+}
+function row(k, v, span){
+  return `<div style="${span===2?'grid-column:1 / -1;':''}"><div style="display:flex;gap:8px;"><div style="width:240px;color:#6b7280;">${k}:</div><div style="font-weight:500;">${v || '—'}</div></div></div>`;
+}
+function scopeLine(label, tick){
+  return `<li style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:14px;height:14px;border:1px solid #111;background:${tick?'#111':'#fff'}"></span><span>${label}</span></li>`;
+}
+function checkMark(checked, label){
+  return `<span style="display:inline-flex;align-items:center;gap:8px;"><span style="display:inline-block;width:14px;height:14px;border:1px solid #111;background:${checked?'#111':'#fff'}"></span>${label}</span>`;
+}
+
+function useFormInit(){
+  return {
+    customer: "", contact: "", address: "", clientOrderNo: "", ourInspectionNo: "",
+    makeAndType: "", reportNo: "", capacity: "", serialNo: "", location: "",
+    scopeA_visual: false, scopeB_loadTest: false, scopeC_mt: false, scopeD_utPins: false, scopeE_corrective: false, scopeF_other: false, scopeOtherText: "",
+    certified: "Yes", comments: "", date: todayStr(), inspectorName: "", passFail: "Pass", newThisYear: false, missing: false, photoDataUrl: "",
+  };
+}
+
+function App(){
+  const [entries, setEntries] = useLocalStorage("wmi_inspection_entries_v4", []);
+  const [logoDataUrl, setLogoDataUrl] = useLocalStorage("wmi_logo_dataurl", "");
+  const [form, setForm] = React.useState(useFormInit());
+  const [photoName, setPhotoName] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [watermarkAtExport, setWatermarkAtExport] = useLocalStorage("wmi_wm_export_only", true);
+
+  const requiredMissing = React.useMemo(() => {
+    const miss = [];
+    if (!form.customer.trim()) miss.push("Customer");
+    if (!form.makeAndType.trim()) miss.push("Make & Type");
+    if (!form.serialNo.trim()) miss.push("Serial No.");
+    if (!form.location.trim()) miss.push("Location");
+    if (!form.date.trim()) miss.push("Date");
+    return miss;
+  }, [form]);
+  const valid = requiredMissing.length === 0;
+
+  const summary = React.useMemo(() => {
+    const total = entries.length;
+    const pass = entries.filter(e => e.passFail === "Pass").length;
+    const fail = entries.filter(e => e.passFail === "Fail").length;
+    const missing = entries.filter(e => e.missing).length;
+    return { total, pass, fail, missing };
+  }, [entries]);
+
+  const handlePhoto = async (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setForm(prev => ({ ...prev, photoDataUrl: reader.result }));
+      setPhotoName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
+  const handleLogo = async (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { setLogoDataUrl(reader.result); };
+    reader.readAsDataURL(file);
+  };
+
+  const ensureNumbers = (f) => {
+    const yr = yearOf(f.date);
+    const next = { ...f };
+    if (!next.reportNo) {
+      const n = getNextSeq("report", yr);
+      next.reportNo = `WMI-LD-${yr}-${pad4(n)}`;
+    }
+    if (!next.ourInspectionNo) {
+      const n2 = getNextSeq("inspection", yr);
+      next.ourInspectionNo = `WMI-INS-${yr}-${pad4(n2)}`;
+    }
+    return next;
+  };
+
+  const addEntry = () => {
+    if (!valid) return;
+    setSaving(true);
+    const entry = { ...ensureNumbers(form), _id: uid() };
+    setEntries(prev => [entry, ...prev]);
+    setForm(useFormInit());
+    setPhotoName("");
+    setTimeout(() => setSaving(false), 300);
+  };
+  const deleteEntry = (id) => setEntries(prev => prev.filter(e => e._id !== id));
+
+  async function exportMasterXlsx() {
+    setBusy(true);
+    try {
+      const XLSX = (await import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm")).default || (await import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm"));
+      const rows = entries.map(e => ({
+        "Customer": e.customer,
+        "Contact Person": e.contact,
+        "Address": e.address,
+        "Client Order No.": e.clientOrderNo,
+        "Our Inspection No.": e.ourInspectionNo,
+        "Make & Type": e.makeAndType,
+        "Report No.": e.reportNo,
+        "Capacity": e.capacity,
+        "Serial No.": e.serialNo,
+        "Location": e.location,
+        "Certified": e.certified,
+        "Comments": e.comments,
+        "Date": e.date,
+        "Inspector": e.inspectorName,
+        "Pass/Fail": e.passFail,
+        "New This Year": e.newThisYear ? "Yes" : "No",
+        "Missing": e.missing ? "Yes" : "No",
+      }));
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, "2025 Inspection List");
+
+      const roll = {
+        Pass: entries.filter(e => e.passFail === "Pass").length,
+        Fail: entries.filter(e => e.passFail === "Fail").length,
+        Missing: entries.filter(e => e.missing).length,
+        Total: entries.length,
+      };
+      const ws2 = XLSX.utils.json_to_sheet([roll]);
+      XLSX.utils.book_append_sheet(wb, ws2, "Roll-up Counts");
+
+      const syncRows = entries.map(e => ({
+        "Equipment Type": e.makeAndType,
+        "ID Number": e.serialNo,
+        "Pass/Fail": e.passFail,
+        "New This Year": e.newThisYear ? "Yes" : "No",
+        "Missing": e.missing ? "Yes" : "No",
+        "Notes": e.comments,
+        "Location": e.location,
+        "Date": e.date,
+      }));
+      const ws3 = XLSX.utils.json_to_sheet(syncRows);
+      XLSX.utils.book_append_sheet(wb, ws3, "Sync – Device List");
+
+      XLSX.writeFile(wb, `WMI_Master_Lifting_List_${todayStr()}.xlsx`);
+    } finally { setBusy(false); }
+  }
+
+  async function exportSinglePdf(entry) {
+    setBusy(true);
+    try {
+      const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.es.min.js");
+      const html2canvas = (await import("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.esm.js")).default;
+      const frag = document.createElement("div");
+      frag.style.width = "780px";
+      frag.style.padding = "24px";
+      frag.style.border = "1px solid #e5e7eb";
+      frag.style.fontFamily = "ui-sans-serif, system-ui, -apple-system";
+      frag.innerHTML = renderPrintableHTML(entry, logoDataUrl, true);
+      document.body.appendChild(frag);
+      const canvas = await html2canvas(frag, { scale: 2 });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const imgWidth = pageWidth - 64;
+      const imgHeight = canvas.height * (imgWidth / canvas.width);
+      pdf.addImage(imgData, "PNG", 32, 32, imgWidth, imgHeight);
+      pdf.save(`WMI_Lifting_Report_${entry.reportNo || entry.serialNo || entry._id}.pdf`);
+      document.body.removeChild(frag);
+    } finally { setBusy(false); }
+  }
+
+  async function exportAllPdfs() {
+    if (!entries.length) return;
+    setBusy(true);
+    try {
+      const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.es.min.js");
+      const html2canvas = (await import("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.esm.js")).default;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      let first = True;
+      first = true;
+      for (const entry of entries) {
+        const frag = document.createElement("div");
+        frag.style.width = "780px";
+        frag.style.padding = "24px";
+        frag.style.border = "1px solid #e5e7eb";
+        frag.style.fontFamily = "ui-sans-serif, system-ui, -apple-system";
+        frag.innerHTML = renderPrintableHTML(entry, logoDataUrl, true);
+        document.body.appendChild(frag);
+        const canvas = await html2canvas(frag, { scale: 2 });
+        const imgData = canvas.toDataURL("image/png");
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const imgWidth = pageWidth - 64;
+        const imgHeight = canvas.height * (imgWidth / canvas.width);
+        if (!first) pdf.addPage();
+        pdf.addImage(imgData, "PNG", 32, 32, imgWidth, imgHeight);
+        first = false;
+        document.body.removeChild(frag);
+      }
+      pdf.save(`WMI_Lifting_Reports_${todayStr()}.pdf`);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    React.createElement("div", {style:{ maxWidth:880, margin:"0 auto", padding:16, paddingBottom:96, fontFamily:"ui-sans-serif, system-ui, -apple-system" }},
+      React.createElement("div", {style:{ position:"sticky", top:0, zIndex:10, background:"rgba(255,255,255,0.85)", backdropFilter:"saturate(180%) blur(4px)", borderBottom:"1px solid #e5e7eb" }},
+        React.createElement("div", {style:{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0" }},
+          React.createElement("div", {style:{ fontSize:18, fontWeight:600 }}, "WMI – Lifting Device Inspection (Standalone)"),
+          React.createElement("div", {style:{ display:"flex", gap:8, alignItems:"center" }},
+            React.createElement("label", {style:{ display:"inline-flex", alignItems:"center", gap:8, padding:"6px 10px", border:"1px solid #e5e7eb", borderRadius:16, cursor:"pointer" }},
+              React.createElement("span", null, "Upload Logo"),
+              React.createElement("input", {type:"file", accept:"image/*", style:{ display:"none" }, onChange:(e)=>{ const f=e.target.files?.[0]; if(f){ const r=new FileReader(); r.onload=()=>setLogoDataUrl(r.result); r.readAsDataURL(f); }}}),
+            ),
+            React.createElement("button", {onClick:exportMasterXlsx, disabled:busy, style:{ padding:"6px 10px", borderRadius:12, border:"1px solid #e5e7eb" }}, "Export Master"),
+            React.createElement("button", {onClick:exportAllPdfs, disabled:busy || entries.length===0, style:{ padding:"6px 10px", borderRadius:12, border:"1px solid #e5e7eb" }}, "Export All Reports (PDF)"),
+          )
+        )
+      ),
+      // Summary
+      React.createElement("div", {style:{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, paddingBottom:12 }},
+        React.createElement(Stat, {label:"Total", value:summary.total}),
+        React.createElement(Stat, {label:"Pass", value:summary.pass, ok:true}),
+        React.createElement(Stat, {label:"Fail", value:summary.fail, warn:true}),
+        React.createElement(Stat, {label:"Missing", value:summary.missing, warn:true}),
+      ),
+      React.createElement(Section, {title:"Client & Device Information"},
+        React.createElement(Grid, null,
+          React.createElement(Field, {label:"Customer", required:!form.customer},
+            React.createElement("input", {value:form.customer, onChange:(e)=>setForm(f=>({...f, customer:e.target.value})), className:!form.customer?"err":undefined})
+          ),
+          React.createElement(Field, {label:"Contact Person"},
+            React.createElement("input", {value:form.contact, onChange:(e)=>setForm(f=>({...f, contact:e.target.value}))})
+          ),
+          React.createElement(Field, {label:"Address", full:true},
+            React.createElement("input", {value:form.address, onChange:(e)=>setForm(f=>({...f, address:e.target.value}))})
+          ),
+          React.createElement(Field, {label:"Client Order No."},
+            React.createElement("input", {value:form.clientOrderNo, onChange:(e)=>setForm(f=>({...f, clientOrderNo:e.target.value}))})
+          ),
+          React.createElement(Field, {label:"Our Inspection No."},
+            React.createElement("input", {value:form.ourInspectionNo, onChange:(e)=>setForm(f=>({...f, ourInspectionNo:e.target.value})), placeholder:"Auto unless entered"})
+          ),
+          React.createElement(Field, {label:"Date", required:!form.date},
+            React.createElement("input", {type:"date", value:form.date, onChange:(e)=>setForm(f=>({...f, date:e.target.value})), className:!form.date?"err":undefined})
+          ),
+          React.createElement(Field, {label:"Make & Type", required:!form.makeAndType},
+            React.createElement("select", {value:form.makeAndType, onChange:(e)=>setForm(f=>({...f, makeAndType:e.target.value})), className:!form.makeAndType?"err":undefined},
+              React.createElement("option", {value:"", disabled:true}, "Select type"),
+              ...EQUIPMENT_TYPES.map(t=>React.createElement("option",{key:t, value:t}, t))
+            )
+          ),
+          React.createElement(Field, {label:"Report No."},
+            React.createElement("input", {value:form.reportNo, onChange:(e)=>setForm(f=>({...f, reportNo:e.target.value})), placeholder:"Auto unless entered"})
+          ),
+          React.createElement(Field, {label:"Capacity"},
+            React.createElement("input", {value:form.capacity, onChange:(e)=>setForm(f=>({...f, capacity:e.target.value})), placeholder:"e.g., 4000 lbs"})
+          ),
+          React.createElement(Field, {label:"Serial No.", required:!form.serialNo},
+            React.createElement("input", {value:form.serialNo, onChange:(e)=>setForm(f=>({...f, serialNo:e.target.value})), className:!form.serialNo?"err":undefined})
+          ),
+          React.createElement(Field, {label:"Location", required:!form.location},
+            React.createElement("input", {list:"locs", value:form.location, onChange:(e)=>setForm(f=>({...f, location:e.target.value})), className:!form.location?"err":undefined, placeholder:"Start typing…"}),
+            React.createElement("datalist", {id:"locs"}, ...DEFAULT_LOCATIONS.map(l=>React.createElement("option",{key:l, value:l})))
+          ),
+        )
+      ),
+      React.createElement(Section, {title:"Scope of Work Performed"},
+        React.createElement(Check, {line:"A) Visual inspection of structure and components", checked:form.scopeA_visual, onChange:(v)=>setForm(f=>({...f, scopeA_visual:v}))}),
+        React.createElement(Check, {line:"B) Load test (per standard / manufacturer)", checked:form.scopeB_loadTest, onChange:(v)=>setForm(f=>({...f, scopeB_loadTest:v}))}),
+        React.createElement(Check, {line:"C) MT examination of structural welds and critical areas", checked:form.scopeC_mt, onChange:(v)=>setForm(f=>({...f, scopeC_mt:v}))}),
+        React.createElement(Check, {line:"D) UT on accessible pins and bolts", checked:form.scopeD_utPins, onChange:(v)=>setForm(f=>({...f, scopeD_utPins:v}))}),
+        React.createElement(Check, {line:"E) Corrective action and re-inspection", checked:form.scopeE_corrective, onChange:(v)=>setForm(f=>({...f, scopeE_corrective:v}))}),
+        React.createElement(Check, {line:"F) Other (specify)", checked:form.scopeF_other, onChange:(v)=>setForm(f=>({...f, scopeF_other:v}))}),
+        form.scopeF_other ? React.createElement("textarea",{value:form.scopeOtherText, onChange:(e)=>setForm(f=>({...f, scopeOtherText:e.target.value})), placeholder:"Describe other scope items…"}) : null
+      ),
+      React.createElement(Section, {title:"Result & Comments"},
+        React.createElement(Grid, null,
+          React.createElement(Field, {label:"Certified"},
+            React.createElement("select", {value:form.certified, onChange:(e)=>setForm(f=>({...f, certified:e.target.value}))},
+              React.createElement("option", null, "Yes"),
+              React.createElement("option", null, "No"),
+            )
+          ),
+          React.createElement(Field, {label:"Inspector Name"},
+            React.createElement("input", {value:form.inspectorName, onChange:(e)=>setForm(f=>({...f, inspectorName:e.target.value}))})
+          ),
+          React.createElement(Field, {label:"Pass/Fail (for roll-up)"},
+            React.createElement("select", {value:form.passFail, onChange:(e)=>setForm(f=>({...f, passFail:e.target.value}))},
+              React.createElement("option", null, "Pass"),
+              React.createElement("option", null, "Fail"),
+            )
+          ),
+          React.createElement("div", {style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, alignItems:"center" }},
+            React.createElement("label", null, React.createElement("input", {type:"checkbox", checked:form.newThisYear, onChange:(e)=>setForm(f=>({...f, newThisYear:e.target.checked}))}), " New this year"),
+            React.createElement("label", null, React.createElement("input", {type:"checkbox", checked:form.missing, onChange:(e)=>setForm(f=>({...f, missing:e.target.checked}))}), " Missing"),
+          ),
+          React.createElement("div", {style:{ gridColumn:"1 / -1" }},
+            React.createElement("label", null, "Comments"),
+            React.createElement("textarea", {value:form.comments, onChange:(e)=>setForm(f=>({...f, comments:e.target.value})), placeholder:"Notes, observations, deficiencies, corrective actions…"})
+          ),
+        )
+      ),
+      React.createElement(Section, {title:"Photo"},
+        React.createElement("div", {style:{ display:"flex", alignItems:"center", gap:12 }},
+          React.createElement("label", {style:{ display:"inline-flex", alignItems:"center", gap:8, padding:"6px 10px", border:"1px solid #e5e7eb", borderRadius:12, cursor:"pointer" }},
+            React.createElement("span", null, "Upload / Take photo"),
+            React.createElement("input", {type:"file", accept:"image/*", capture:"environment", style:{ display:"none" }, onChange:(e)=>{ const f=e.target.files?.[0]; if(f){ const r=new FileReader(); r.onload=()=>{ setForm(prev=>({...prev, photoDataUrl:r.result})); }; r.readAsDataURL(f); }}}),
+          ),
+          React.createElement("span", {style:{ fontSize:12, color:"#6b7280" }}, photoName || "No file selected")
+        ),
+        form.photoDataUrl ?
+          React.createElement("img", {src:form.photoDataUrl, alt:"preview", style:{ border:"1px solid #e5e7eb", borderRadius:12, width:"100%", maxHeight:320, objectFit:"cover", marginTop:8 }}) :
+          React.createElement("div", {style:{ border:"1px dashed #d1d5db", borderRadius:12, padding:24, textAlign:"center", color:"#6b7280", marginTop:8 }}, "Photo preview will appear here")
+      ),
+      React.createElement("div", {style:{ marginTop:16 }},
+        !valid ? React.createElement("div", {style:{ color:"#dc2626", fontSize:14, marginBottom:8 }}, "Required: ", requiredMissing.join(", ")) : null,
+        React.createElement("div", {style:{ display:"flex", gap:8 }},
+          React.createElement("button", {onClick:addEntry, disabled:!valid || saving, style:{ padding:"8px 12px", borderRadius:12, border:"1px solid #e5e7eb" }}, saving?"Saving…":"Add to Master List"),
+          React.createElement("label", {style:{ marginLeft:12, fontSize:12 }},
+            React.createElement("input", {type:"checkbox", checked:watermarkAtExport, onChange:(e)=>setWatermarkAtExport(e.target.checked)}),
+            " Watermark only when exporting (faster)"
+          )
+        )
+      ),
+      React.createElement("div", {style:{ marginTop:24, display:"grid", gap:12 }},
+        ...entries.map(entry => React.createElement("div", {key:entry._id, style:{ border:"1px solid #e5e7eb", borderRadius:12, padding:12 }},
+          React.createElement("div", {style:{ display:"flex", justifyContent:"space-between", alignItems:"center" }},
+            React.createElement("div", {style:{ fontWeight:600, fontSize:14 }}, (entry.makeAndType||"(Type)"), " — ", (entry.serialNo||entry.reportNo||entry._id)),
+            React.createElement("div", {style:{ display:"flex", gap:8 }},
+              React.createElement("button", {onClick:()=>exportSinglePdf(entry), style:{ padding:"6px 10px", borderRadius:12, border:"1px solid #e5e7eb" }}, "PDF Report"),
+              React.createElement("button", {onClick:()=>deleteEntry(entry._id), style:{ padding:"6px 10px", borderRadius:12, border:"1px solid #e5e7eb", color:"#dc2626" }}, "Remove"),
+            )
+          ),
+          React.createElement("div", {style:{ marginTop:4, fontSize:12, color:"#6b7280" }}, (entry.customer||"(Customer)"), " • ", (entry.location||"(Location)"), " • ", entry.date),
+          React.createElement("div", {style:{ marginTop:8, display:"flex", gap:8, alignItems:"center" }},
+            React.createElement("span", {style:{ fontSize:12, color: entry.passFail==="Pass" ? "#16a34a" : "#dc2626" }}, entry.passFail),
+            React.createElement("span", {className:"pill", style:{ fontSize:11, background:"#f3f4f6", padding:"2px 8px", borderRadius:9999 }}, "Certified: ", entry.certified),
+            entry.newThisYear ? React.createElement("span", {style:{ fontSize:11, background:"#dbeafe", padding:"2px 8px", borderRadius:9999 }}, "New") : null,
+            entry.missing ? React.createElement("span", {style:{ fontSize:11, background:"#fee2e2", padding:"2px 8px", borderRadius:9999 }}, "Missing") : null,
+          ),
+          entry.comments ? React.createElement("div", {style:{ marginTop:8, fontSize:13, whiteSpace:"pre-wrap" }}, entry.comments) : null,
+          entry.photoDataUrl ? React.createElement("img", {alt:"photo", src:entry.photoDataUrl, style:{ border:"1px solid #e5e7eb", borderRadius:12, marginTop:8, maxHeight:260, objectFit:"cover" }}) : null,
+        ))
+      ),
+      React.createElement("style", null, `
+        input, select, textarea { width:100%; padding:8px 10px; border:1px solid #e5e7eb; border-radius:12px; font-size:14px; }
+        textarea { min-height:110px; } label { display:block; font-size:12px; color:#374151; margin-bottom:4px; }
+        .err { border-color:#fecaca; background:#fff1f2; }
+      `)
+    )
+  );
+}
+
+function Section({ title, children }){
+  return React.createElement("div", {style:{ border:"1px solid #e5e7eb", borderRadius:12, padding:16, marginTop:16 }},
+    React.createElement("div", {style:{ fontWeight:600, marginBottom:8 }}, title),
+    children
+  );
+}
+function Grid({ children }){ return React.createElement("div", {style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}, children); }
+function Field({ label, children, full, required }){
+  return React.createElement("div", {style:{ gridColumn: full?"1 / -1":"auto" }},
+    React.createElement("label", null, label, " ", required ? React.createElement("span", {style:{ color:"#dc2626" }}, "(required)") : null),
+    children
+  );
+}
+function Check({ line, checked, onChange }){
+  return React.createElement("label", {style:{
+      display:"flex",
+      alignItems:"flex-start",
+      gap:10,
+      fontSize:14,
+      cursor:"pointer",
+      border:"1px solid #e5e7eb",
+      padding:10,
+      borderRadius:12,
+      width:"100%",
+      boxSizing:"border-box"
+    }},
+    React.createElement("input", {type:"checkbox", checked:checked, onChange:(e)=>onChange(e.target.checked), style:{marginTop:2}}),
+    React.createElement("span", {style:{
+      flex:"1 1 auto",
+      whiteSpace:"normal",
+      wordBreak:"break-word",
+      overflowWrap:"anywhere",
+      lineHeight:1.25
+    }}, line)
+  );
+}
+}
+function Stat({ label, value, ok, warn }){
+  return React.createElement("div", {style:{ border:"1px solid #e5e7eb", borderRadius:12, padding:12, textAlign:"center", background: ok?"#ecfdf5": warn?"#fef2f2":"white" }},
+    React.createElement("div", {style:{ fontSize:12, color:"#6b7280" }}, label),
+    React.createElement("div", {style:{ fontSize:18, fontWeight:600 }}, value)
+  );
+}
+
+// Mount
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+
+  </script>
+  <script>
+    if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js')); }
+  </script>
+</body>
+</html>
