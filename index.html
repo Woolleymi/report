@@ -329,8 +329,7 @@ function App(){
       const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.es.min.js");
       const html2canvas = (await import("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.esm.js")).default;
       const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-      let first = True;
-      first = true;
+      let first = true;
       for (const entry of entries) {
         const frag = document.createElement("div");
         frag.style.width = "780px";
@@ -539,7 +538,6 @@ function Check({ line, checked, onChange }){
     }}, line)
   );
 }
-}
 function Stat({ label, value, ok, warn }){
   return React.createElement("div", {style:{ border:"1px solid #e5e7eb", borderRadius:12, padding:12, textAlign:"center", background: ok?"#ecfdf5": warn?"#fef2f2":"white" }},
     React.createElement("div", {style:{ fontSize:12, color:"#6b7280" }}, label),
@@ -554,6 +552,6 @@ root.render(React.createElement(App));
   </script>
   <script>
     if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js')); }
-  <script src="app.js"></script>
+  </script>
 </body>
 </html>
